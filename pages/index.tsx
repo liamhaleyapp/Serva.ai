@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Head from 'next/head';
+import test from 'node:test';
 
 export default function Home() {
   const [prompt, setPrompt] = useState('');
