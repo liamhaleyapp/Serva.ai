@@ -34,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // 4. Log to Supabase
     console.log('Logging project to Supabase...');
-    await logProjectToSupabase({ prompt, deployedUrl, ntl });
+    await logProjectToSupabase({ prompt, url: deployedUrl, ntl });
 
     res.status(200).json({ 
       success: true,
