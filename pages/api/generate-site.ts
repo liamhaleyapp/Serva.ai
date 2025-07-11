@@ -31,10 +31,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       errorStep = 'NeuralSeek agent creation';
       agentData = await createAgentWithNeuralSeek(prompt);
       neuralSeekResponse = agentData.neuralSeekRaw;
-      if (!agentData.ntl) {
-        throw new Error('NeuralSeek did not return a valid NTL script.');
+      if (!agentData.agentOpenApi) {
+        throw new Error('NeuralSeek did not return a valid OpenAPI spec.');
       }
-      ntl = agentData.ntl;
+      ntl = agentData.agentOpenApi; // ntl now holds the OpenAPI spec
     } else {
       // Fallback: use provided agent_json
       errorStep = 'Manual agent JSON';
@@ -53,7 +53,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Step 2: Generate NTL plan (if not already structured)
     errorStep = 'NTL plan generation';
     let ntlPlan = ntl;
-    if (typeof ntl === 'string') {
+    // For OpenAPI, just pass through; for manual, parse if string
+    if (!use_neuralseek && typeof ntl === 'string') {
       try {
         ntlPlan = JSON.parse(ntl);
       } catch {
@@ -61,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Step 3: Generate code from NTL
+    // Step 3: Generate code from NTL (now OpenAPI)
     errorStep = 'Code generation';
     projectPath = await generateCodeFromNTL(ntlPlan, openaiApiKey);
     componentCount = Array.isArray(ntlPlan.components) ? ntlPlan.components.length : 0;

@@ -15,10 +15,11 @@ export interface NeuralSeekAgentResponse {
 }
 
 export interface AgentData {
-  name: string;
-  ntl: string;
-  capabilities: string[];
+  name?: string;
+  ntl?: string;
+  capabilities?: string[];
   neuralSeekRaw: any;
+  agentOpenApi?: any;
 }
 
 const NEURALSEEK_API_URL = process.env.NEURALSEEK_API_URL || 'https://stagingapi.neuralseek.com/v1/Liam-demo/maistro';
@@ -27,8 +28,14 @@ const NEURALSEEK_API_KEY = process.env.NEURALSEEK_API_KEY || '452d320e-5d4fac0e-
 // --- Main NeuralSeek Integration ---
 export async function createAgentWithNeuralSeek(prompt: string, context?: string): Promise<AgentData> {
   try {
-    const payload: NeuralSeekAgentRequest = { prompt };
-    if (context) payload.context = context;
+    // Build payload according to OpenAPI spec
+    const payload = {
+      agent: 'Create-agent',
+      params: {
+        use_case_summary: prompt
+      }
+    };
+    // context is not used in the new payload structure
 
     const response = await axios.post(
       NEURALSEEK_API_URL,
@@ -36,43 +43,42 @@ export async function createAgentWithNeuralSeek(prompt: string, context?: string
       {
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': NEURALSEEK_API_KEY,
+          'apikey': NEURALSEEK_API_KEY,
         },
         timeout: 30000,
       }
     );
 
-    // Defensive: Try to parse and extract agent data
-    let agent_name = '';
-    let ntl_script = '';
-    let capabilities: string[] = [];
-    try {
-      agent_name = response.data.agent_name || '';
-      ntl_script = response.data.ntl_script || '';
-      // Try to extract capabilities from NTL or response
-      if (Array.isArray(response.data.capabilities)) {
-        capabilities = response.data.capabilities;
-      } else if (ntl_script) {
-        capabilities = extractCapabilitiesFromNTL(ntl_script);
-      }
-    } catch (err) {
-      // fallback: just use empty/defaults
+    console.log("NeuralSeek raw response:", JSON.stringify(response.data, null, 2));
+
+    // Check if response has error structure
+    if (response.data && response.data.error) {
+      console.error("NeuralSeek returned error:", response.data.error);
+      throw new Error(`NeuralSeek API error: ${response.data.error}`);
+    }
+
+    // Try to extract the OpenAPI spec
+    let agentOpenApi: any = null;
+    if (response.data && response.data.openapi) {
+      agentOpenApi = response.data;
+    } else if (response.data && response.data.info && response.data.paths) {
+      // Sometimes the OpenAPI spec is the root object
+      agentOpenApi = response.data;
+    } else {
+      // Log for debugging
+      console.error("Could not find OpenAPI spec in NeuralSeek response:", response.data);
+      throw new Error('NeuralSeek did not return a valid OpenAPI spec. See logs for details.');
     }
 
     return {
-      name: agent_name,
-      ntl: ntl_script,
-      capabilities,
+      name: response.data.info?.title || "Unknown Agent",
       neuralSeekRaw: response.data,
+      agentOpenApi,
     };
   } catch (error: any) {
-    // Robust error handling
-    return {
-      name: '',
-      ntl: '',
-      capabilities: [],
-      neuralSeekRaw: { error: error?.message || 'Unknown error', data: error?.response?.data },
-    };
+    // Re-throw the error so the API handler can catch it
+    console.error('NeuralSeek API error:', error?.response?.data || error?.message);
+    throw error;
   }
 }
 
