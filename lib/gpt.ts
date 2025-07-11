@@ -1,8 +1,7 @@
 import OpenAI from 'openai';
+import { AgentData } from './neuralseek';
 
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY 
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface NTLPlan {
   components: string[];
@@ -11,67 +10,84 @@ export interface NTLPlan {
   user_inputs: string[];
   theme: string;
   api_endpoints: string[];
+  [key: string]: any;
 }
 
-export async function generateNTL(prompt: string, agentJson: any): Promise<NTLPlan> {
-  const fullPrompt = `You are an AI web architect. Based on the following user prompt and agent metadata, output a structured plan for a web UI that interacts with the agent.
+// --- Generate a detailed NTL plan using agent context ---
+export async function generateNTL(prompt: string, agent: AgentData): Promise<NTLPlan> {
+  const fullPrompt = `You are an expert AI web architect. Given the following agent metadata and user prompt, design a detailed UI plan for a production-ready React web app. 
 
 Prompt: "${prompt}"
 
 Agent Metadata:
-${JSON.stringify(agentJson, null, 2)}
+${JSON.stringify(agent, null, 2)}
 
-Return a valid JSON object with the following structure:
+Requirements:
+- Output a valid JSON object with keys: components[], layout[], actions[], user_inputs[], theme, api_endpoints[]
+- Select components based on agent capabilities (e.g., ChatInterface for chat, FileUpload for file processing, DataTable for analytics, etc.)
+- Add user flows and describe the main UI layout
+- Suggest a color theme based on agent purpose
+- Include all required API endpoints
+- Be concise but comprehensive
+
+Example output:
 {
-  "components": ["array of component names"],
-  "layout": ["array of layout instructions"],
-  "actions": ["array of action descriptions"],
-  "user_inputs": ["array of user input fields needed"],
-  "theme": "theme description",
-  "api_endpoints": ["array of required API endpoints"]
+  "components": ["ChatInterface", "MessageHistory", "TypingIndicator"],
+  "layout": ["Header", "Main", "Sidebar"],
+  "actions": ["SendMessage", "UploadFile"],
+  "user_inputs": ["MessageInput"],
+  "theme": "blue/white, modern, accessible",
+  "api_endpoints": ["/api/send-message", "/api/upload"]
 }
-
-Make sure the response is valid JSON only.`;
+`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [{ role: 'user', content: fullPrompt }],
-      temperature: 0.7,
+      temperature: 0.5,
       max_tokens: 2000,
     });
-
     const planText = completion.choices[0]?.message?.content;
-    if (!planText) {
-      throw new Error('No response from OpenAI');
-    }
-
+    if (!planText) throw new Error('No response from OpenAI');
     // Try to extract JSON from the response
     const jsonMatch = planText.match(/\{[\s\S]*\}/);
     const jsonString = jsonMatch ? jsonMatch[0] : planText;
-    
-    const plan = JSON.parse(jsonString);
-    return plan as NTLPlan;
+    return JSON.parse(jsonString);
   } catch (error) {
-    console.error('Error generating NTL:', error);
-    throw new Error(`Failed to generate NTL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Fallback: minimal plan
+    return {
+      components: ['FallbackComponent'],
+      layout: ['Main'],
+      actions: [],
+      user_inputs: [],
+      theme: 'gray/white',
+      api_endpoints: [],
+      error: (error as Error).message || 'Unknown error',
+    };
   }
 }
 
-export async function generateComponent(componentName: string, ntl: NTLPlan, apiKey: string): Promise<string> {
-  const componentPrompt = `Generate a React TypeScript component named "${componentName}" based on this NTL plan:
+// --- Generate a React component using agent and NTL context ---
+export async function generateComponent(name: string, ntlPlan: NTLPlan, agent: AgentData, apiKey: string): Promise<string> {
+  const componentPrompt = `Generate a modern, production-ready React TypeScript component named "${name}" for the following agent and UI plan:
 
-${JSON.stringify(ntl, null, 2)}
+Agent Metadata:
+${JSON.stringify(agent, null, 2)}
+
+NTL Plan:
+${JSON.stringify(ntlPlan, null, 2)}
 
 Requirements:
-- Use modern React with hooks
-- Include proper TypeScript types
-- Use Tailwind CSS for styling
-- Make it responsive and accessible
-- Include proper error handling
-- Add loading states where appropriate
-
-Return only the component code, no explanations.`;
+- Use functional components and hooks
+- Use Tailwind CSS utility classes only
+- Add ARIA labels and accessibility features
+- Add loading and error states
+- Add TypeScript interfaces for props
+- Make it responsive and mobile-first
+- Add comments for key logic
+- Return only the code, no explanations
+`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -80,27 +96,22 @@ Return only the component code, no explanations.`;
       temperature: 0.3,
       max_tokens: 3000,
     });
-
     const code = completion.choices[0]?.message?.content;
-    if (!code) {
-      throw new Error('No component code generated');
+    if (!code) throw new Error('No component code generated');
+    // Basic code validation: ensure it exports a React component
+    if (!/export\s+default\s+function|export\s+default\s+\w+/i.test(code)) {
+      throw new Error('Generated code does not export a default React component');
     }
-
     return code;
   } catch (error) {
-    console.error(`Error generating component ${componentName}:`, error);
-    // Return a fallback component
+    // Fallback: simple placeholder
     return `import React from 'react';
 
-interface ${componentName}Props {
-  // Add props as needed
-}
-
-export default function ${componentName}(props: ${componentName}Props) {
+export default function ${name}() {
   return (
     <div className="p-4 border rounded-lg">
-      <h2 className="text-xl font-bold mb-2">${componentName}</h2>
-      <p className="text-gray-600">Component placeholder</p>
+      <h2 className="text-xl font-bold mb-2">${name}</h2>
+      <p className="text-gray-600">Component placeholder (generation failed)</p>
     </div>
   );
 }`;
