@@ -29,12 +29,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Step 1: Create agent with NeuralSeek (if enabled)
     if (use_neuralseek !== false) {
       errorStep = 'NeuralSeek agent creation';
-      agentData = await createAgentWithNeuralSeek(prompt);
-      neuralSeekResponse = agentData.neuralSeekRaw;
-      if (!agentData.agentOpenApi) {
-        throw new Error('NeuralSeek did not return a valid OpenAPI spec.');
+      try {
+        agentData = await createAgentWithNeuralSeek(prompt);
+        neuralSeekResponse = agentData.neuralSeekRaw;
+        if (!agentData.agentOpenApi) {
+          throw new Error('NeuralSeek did not return a valid OpenAPI spec.');
+        }
+        ntl = agentData.agentOpenApi; // ntl now holds the OpenAPI spec
+      } catch (neuralSeekError: any) {
+        // If NeuralSeek fails, fall back to manual generation
+        console.error('NeuralSeek failed, falling back to manual generation:', neuralSeekError.message);
+        errorStep = 'Manual fallback generation';
+        
+        // Create a simple fallback agent
+        agentData = {
+          name: `FallbackAgent-${Date.now()}`,
+          ntl: JSON.stringify({ type: 'fallback', prompt }),
+          capabilities: ['basic_response'],
+          neuralSeekRaw: null,
+        };
+        
+        // Generate a simple NTL plan using GPT
+        ntl = await generateNTL(prompt, agentData);
       }
-      ntl = agentData.agentOpenApi; // ntl now holds the OpenAPI spec
     } else {
       // Fallback: use provided agent_json
       errorStep = 'Manual agent JSON';
@@ -58,31 +75,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         ntlPlan = JSON.parse(ntl);
       } catch {
-        ntlPlan = await generateNTL(prompt, ntl);
+        ntlPlan = await generateNTL(prompt, agentData || { name: 'ManualAgent', ntl: ntl, capabilities: [], neuralSeekRaw: null });
       }
     }
 
     // Step 3: Generate code from NTL (now OpenAPI)
     errorStep = 'Code generation';
-    projectPath = await generateCodeFromNTL(ntlPlan, openaiApiKey);
-    componentCount = Array.isArray(ntlPlan.components) ? ntlPlan.components.length : 0;
+    projectPath = await generateCodeFromNTL(ntlPlan as any, openaiApiKey, agentData || undefined);
+    // For OpenAPI specs, components might not exist, so default to 0
+    componentCount = ntlPlan.components && Array.isArray(ntlPlan.components) ? ntlPlan.components.length : 0;
 
     // Step 4: Deploy to Vercel
     errorStep = 'Vercel deployment';
-    deployedUrl = await deployToVercel(projectPath);
+    deployedUrl = await deployToVercel(projectPath, agentData?.name);
 
     // Step 5: Log to Supabase
     errorStep = 'Supabase logging';
-    await logProjectToSupabase({
-      prompt,
-      url: deployedUrl,
-      ntl: ntlPlan,
-      agent_name: agentData?.name,
-      agent_capabilities: agentData?.capabilities,
-      neural_seek_response: neuralSeekResponse,
-      generation_time: Date.now() - startTime,
-      component_count: componentCount,
-    });
+    try {
+      await logProjectToSupabase({
+        prompt,
+        url: deployedUrl,
+        ntl: typeof ntlPlan === 'string' ? ntlPlan : JSON.stringify(ntlPlan),
+        agent_name: agentData?.name,
+        agent_capabilities: agentData?.capabilities,
+        neural_seek_response: neuralSeekResponse,
+        generation_time: Date.now() - startTime,
+        component_count: componentCount,
+      });
+    } catch (loggingError) {
+      console.error('Supabase logging failed, but continuing with response:', loggingError);
+      // Don't fail the entire request if logging fails
+    }
 
     res.status(200).json({
       success: true,

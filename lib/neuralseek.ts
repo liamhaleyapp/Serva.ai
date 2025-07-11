@@ -33,6 +33,10 @@ export async function createAgentWithNeuralSeek(prompt: string, context?: string
       agent: 'Create-agent',
       params: {
         use_case_summary: prompt
+      },
+      options: {
+        returnVariables: true,
+        returnVariablesExpanded: true
       }
     };
     // context is not used in the new payload structure
@@ -45,7 +49,7 @@ export async function createAgentWithNeuralSeek(prompt: string, context?: string
           'Content-Type': 'application/json',
           'apikey': NEURALSEEK_API_KEY,
         },
-        timeout: 30000,
+        timeout: 60000, // Increased to 60 seconds
       }
     );
 
@@ -57,26 +61,52 @@ export async function createAgentWithNeuralSeek(prompt: string, context?: string
       throw new Error(`NeuralSeek API error: ${response.data.error}`);
     }
 
-    // Try to extract the OpenAPI spec
+    // Extract OpenAPI spec from the answer field
     let agentOpenApi: any = null;
-    if (response.data && response.data.openapi) {
+    const answer = response.data?.answer;
+    
+    if (answer) {
+      // Find the first '{' after any "OK" or whitespace
+      const firstBrace = answer.indexOf('{');
+      if (firstBrace !== -1) {
+        const possibleJson = answer.slice(firstBrace);
+        try {
+          agentOpenApi = JSON.parse(possibleJson);
+          console.log("Successfully parsed OpenAPI spec from answer field");
+        } catch (e) {
+          console.error('Failed to parse OpenAPI JSON from NeuralSeek answer:', e);
+          console.error('Attempted to parse:', possibleJson);
+        }
+      }
+    }
+
+    // Fallback: check if response has OpenAPI structure directly
+    if (!agentOpenApi && response.data && response.data.openapi) {
       agentOpenApi = response.data;
-    } else if (response.data && response.data.info && response.data.paths) {
+    } else if (!agentOpenApi && response.data && response.data.info && response.data.paths) {
       // Sometimes the OpenAPI spec is the root object
       agentOpenApi = response.data;
-    } else {
+    }
+
+    if (!agentOpenApi) {
       // Log for debugging
       console.error("Could not find OpenAPI spec in NeuralSeek response:", response.data);
       throw new Error('NeuralSeek did not return a valid OpenAPI spec. See logs for details.');
     }
 
     return {
-      name: response.data.info?.title || "Unknown Agent",
+      name: agentOpenApi.info?.title || "Unknown Agent",
       neuralSeekRaw: response.data,
       agentOpenApi,
     };
   } catch (error: any) {
-    // Re-throw the error so the API handler can catch it
+    // Handle timeout specifically
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      console.error('NeuralSeek API timeout - the request took too long to complete');
+      throw new Error('NeuralSeek API timeout. The request took longer than 60 seconds. Please try again with a simpler prompt.');
+    }
+    
+    // Handle other errors
     console.error('NeuralSeek API error:', error?.response?.data || error?.message);
     throw error;
   }
