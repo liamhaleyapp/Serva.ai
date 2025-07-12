@@ -56,6 +56,9 @@ export async function generateCodeFromNTL(openApiSpec: any, apiKey: string, agen
   // 12. Write vite.config.ts
   await fs.writeFile(path.join(outDir, 'vite.config.ts'), generateViteConfig());
 
+  console.log('Generated App.tsx:', await fs.readFile(path.join(outDir, 'src/App.tsx'), 'utf8'));
+  console.log('Generated MaistroPost.tsx:', await fs.readFile(path.join(outDir, 'src/Postmaistro.tsx'), 'utf8'));
+
   return outDir;
 }
 
@@ -66,27 +69,107 @@ interface ComponentInfo {
 
 function generateComponentsFromOpenAPI(openApiSpec: any, agent?: AgentData): ComponentInfo[] {
   const components: ComponentInfo[] = [];
-  
+
   // Extract API info
   const apiTitle = openApiSpec.info?.title || agent?.name || 'AI Agent';
   const apiDescription = openApiSpec.info?.description || 'AI Agent Interface';
-  const baseUrl = openApiSpec.servers?.[0]?.url || 'https://api.example.com';
-  
-  // Generate main chat interface for NeuralSeek agents
-  if (openApiSpec.paths?.['/maistro']) {
-    components.push({
-      name: 'ChatInterface',
-      code: generateChatInterface(apiTitle, apiDescription)
-    });
+
+  // Generate a component for each path and method
+  for (const [path, methods] of Object.entries(openApiSpec.paths || {})) {
+    for (const [method, operation] of Object.entries(methods as any)) {
+      // Only generate for standard HTTP methods
+      if (["get", "post", "put", "delete", "patch"].includes(method.toLowerCase())) {
+        components.push({
+          name: generateComponentName(path, method),
+          code: generateGenericComponent(path, method, operation)
+        });
+      }
+    }
   }
-  
-  // Generate agent info component
+
+  // Always add AgentInfo
   components.push({
     name: 'AgentInfo',
     code: generateAgentInfo(apiTitle, apiDescription, agent)
   });
-  
+
   return components;
+}
+
+// Helper to create a valid React component name
+function generateComponentName(path: string, method: string): string {
+  return (
+    method.charAt(0).toUpperCase() +
+    method.slice(1).toLowerCase() +
+    path.replace(/[^a-zA-Z0-9]/g, '')
+  );
+}
+
+function generateGenericComponent(path: string, method: string, operation: any): string {
+  const opId = operation.operationId || `${method}_${path.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const summary = operation.summary || `${method.toUpperCase()} ${path}`;
+  const params = operation.parameters || [];
+  const hasBody = !!operation.requestBody;
+
+  // Generate form fields for parameters
+  const paramFields = params.map((param: any) => {
+    return `<div>
+      <label>${param.name}:</label>
+      <input name="${param.name}" type="text" />
+    </div>`;
+  }).join('\n');
+
+  // Add a textarea for request body if present
+  const bodyField = hasBody
+    ? `<div>
+        <label>Body (JSON):</label>
+        <textarea name="body" rows={4} />
+      </div>`
+    : '';
+
+  return `
+import React, { useState } from 'react';
+
+export default function ${generateComponentName(path, method)}() {
+  const [result, setResult] = useState<any>(null);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const params: Record<string, any> = {};
+    formData.forEach((value, key) => { params[key] = value; });
+
+    let body = undefined;
+    if (${hasBody}) {
+      try { body = JSON.parse(params['body'] as string); } catch {}
+    }
+
+    const res = await fetch(
+      \`${path}\`, {
+        method: '${method.toUpperCase()}',
+        headers: { 'Content-Type': 'application/json' },
+        ${hasBody ? 'body: JSON.stringify(body),' : ''}
+      }
+    );
+    setResult(await res.json());
+  };
+
+  return (
+    <div style={{border: '1px solid #eee', padding: 16, marginBottom: 16}}>
+      <h3>${summary}</h3>
+      <form onSubmit={handleSubmit}>
+        ${paramFields}
+        ${bodyField}
+        <button type="submit">Send</button>
+      </form>
+      {result && (
+        <pre>{JSON.stringify(result, null, 2)}</pre>
+      )}
+    </div>
+  );
+}
+`;
 }
 
 function generateChatInterface(agentName: string, description: string): string {
