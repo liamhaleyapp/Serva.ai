@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Head from 'next/head';
 import ProgressIndicator from '../components/ProgressIndicator';
+import { useRouter } from 'next/router';
 
 // --- DynamicAgentForm: Renders a form from input definitions ---
 type InputOption = { value: string; label: string };
@@ -12,6 +13,8 @@ type InputDefinition = {
   hint?: string;
   options?: InputOption[];
   group?: string;
+  placeholder?: string;
+  examples?: any;
 };
 
 interface DynamicAgentFormProps {
@@ -108,8 +111,8 @@ function DynamicAgentForm({ inputDefinitions, onSubmit }: DynamicAgentFormProps)
   );
 }
 
-// --- Extraction logic: Get user-facing input definitions from OpenAPI JSON ---
-function extractInputDefinitions(openApiJson: any) {
+// --- Extraction logic: Only user-facing fields ---
+function extractUserInputs(openApiJson: any): InputDefinition[] {
   if (!openApiJson || typeof openApiJson !== 'object') return [];
   // Find the POST path (usually only one for agent)
   const postPath = Object.entries(openApiJson.paths || {}).find(
@@ -117,44 +120,53 @@ function extractInputDefinitions(openApiJson: any) {
   );
   if (!postPath) return [];
   const postOp = (postPath[1] as Record<string, any>).post;
-  // Get requestBody schema
   const schema = postOp?.requestBody?.content?.['application/json']?.schema;
   if (!schema || !schema.properties) return [];
-  // Main user inputs are usually under 'params'
+
+  // Only use 'params' for main user inputs
   const params = schema.properties.params;
   const paramsRequired = (params && params.required) || [];
   const paramProps = (params && params.properties) || {};
-  // Advanced options (optional)
-  const options = schema.properties.options;
-  const optionsRequired = (options && options.required) || [];
-  const optionProps = (options && options.properties) || {};
-  // Helper to map schema prop to input definition
-  function mapProp(name: string, prop: any, required: boolean) {
+
+  // List of known system/internal fields to ignore
+  const SYSTEM_FIELDS = [
+    'streaming', 'llm', 'user_id', 'timeout', 'temperatureMod', 'toppMod', 'freqpenaltyMod',
+    'minTokens', 'maxTokens', 'lastTurn', 'returnVariables', 'returnVariablesExpanded',
+    'returnRender', 'returnSource', 'maxRecursion'
+  ];
+
+  function mapProp(name: string, prop: any, required: boolean): InputDefinition | null {
+    if (SYSTEM_FIELDS.includes(name)) return null;
     let type = 'text';
     if (prop.format === 'binary') type = 'file';
     else if (prop.type === 'boolean') type = 'checkbox';
     else if (prop.type === 'integer' || prop.type === 'number') type = 'number';
     else if (prop.type === 'string' && prop.maxLength && prop.maxLength > 200) type = 'textarea';
     else if (prop.enum) type = 'dropdown';
+    // Add example placeholders for user preferences
+    let placeholder = '';
+    if (name.toLowerCase().includes('preference')) {
+      placeholder = 'e.g. Short, bullet-point summary, focus on methods and conclusions, layman’s terms for non-experts, highlight major findings, 300 words or less';
+    }
     return {
       name,
       label: prop.title || prop.description || name.replace(/([A-Z])/g, ' $1').replace(/^\w/, c => c.toUpperCase()),
       type,
-      required: required,
+      required,
       hint: prop.description || '',
       options: prop.enum ? prop.enum.map((v: any) => ({ value: v, label: String(v) })) : undefined,
-      group: 'main',
+      placeholder,
+      examples: prop.examples || [],
     };
   }
-  // Main inputs
-  const mainInputs = Object.entries(paramProps).map(([name, prop]) =>
-    mapProp(name, prop, paramsRequired.includes(name))
-  );
-  // Advanced options
-  const advancedInputs = Object.entries(optionProps).map(([name, prop]) =>
-    ({ ...mapProp(name, prop, optionsRequired.includes(name)), group: 'advanced' })
-  );
-  return [...mainInputs, ...advancedInputs];
+
+  function isInputDefinition(x: InputDefinition | null): x is InputDefinition {
+    return x !== null;
+  }
+
+  return Object.entries(paramProps)
+    .map(([name, prop]) => mapProp(name, prop, paramsRequired.includes(name)))
+    .filter(isInputDefinition);
 }
 
 const GENERATION_STEPS = [
@@ -180,6 +192,7 @@ export default function Home() {
   const [loadingStep, setLoadingStep] = useState<number | null>(null);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   const handleExample = (example: string) => {
     setPrompt(example);
@@ -222,6 +235,17 @@ export default function Home() {
       await new Promise(r => setTimeout(r, 500));
       setResult(data);
       setLoadingStep(null);
+      // Store agent and OpenAPI JSON in sessionStorage for /site/[agentName] page
+      if (data.agent && data.agent.name && data.ntl) {
+        window.sessionStorage.setItem(
+          `agent_${data.agent.name}`,
+          JSON.stringify({ agent: data.agent, ntl: data.ntl })
+        );
+      }
+      // Route to new site page after generation
+      if (data.agent && data.agent.name) {
+        router.push(`/site/${encodeURIComponent(data.agent.name)}`);
+      }
     } catch (err: any) {
       setError(err.message || 'Unknown error occurred');
       setLoadingStep(null);
@@ -359,7 +383,7 @@ export default function Home() {
                 {/* --- Dynamic Agent Form --- */}
                 {result.ntl && (
                   <DynamicAgentForm
-                    inputDefinitions={extractInputDefinitions(result.ntl)}
+                    inputDefinitions={extractUserInputs(result.ntl)}
                     onSubmit={(formData) => {
                       // TODO: Handle form submission (call agent endpoint, etc.)
                       alert('Form submitted! ' + JSON.stringify(formData, null, 2));
