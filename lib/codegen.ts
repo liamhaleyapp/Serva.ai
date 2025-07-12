@@ -329,52 +329,15 @@ function generateAgentInfo(agentName: string, description: string, agent?: Agent
   return `import React from 'react';
 import { Bot, Zap, Shield, Globe } from 'lucide-react';
 
-export default function AgentInfo() {
+export default function AgentInfo({ agentName, agentDescription }: { agentName: string, agentDescription: string }) {
   return (
-    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6">
-      <div className="flex items-center space-x-3 mb-4">
-        <div className="w-12 h-12 bg-blue-500 rounded-lg flex items-center justify-center">
-          <Bot className="w-6 h-6 text-white" />
-        </div>
-        <div>
-          <h3 className="text-xl font-bold text-gray-900">{agentName}</h3>
-          <p className="text-gray-600">{description}</p>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="flex items-center space-x-2">
-          <Zap className="w-5 h-5 text-blue-500" />
-          <span className="text-sm text-gray-700">AI-Powered</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Shield className="w-5 h-5 text-green-500" />
-          <span className="text-sm text-gray-700">Secure</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Globe className="w-5 h-5 text-purple-500" />
-          <span className="text-sm text-gray-700">Always Available</span>
-        </div>
-      </div>
-      
-      {agent?.capabilities && agent.capabilities.length > 0 && (
-        <div className="mt-4">
-          <h4 className="text-sm font-medium text-gray-900 mb-2">Capabilities:</h4>
-          <div className="flex flex-wrap gap-2">
-            {agent.capabilities.map((capability, index) => (
-              <span
-                key={index}
-                className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full"
-              >
-                {capability}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+    <div className="bg-white rounded shadow p-6 mb-6">
+      <h2 className="text-2xl font-bold mb-2">{agentName}</h2>
+      <p className="text-gray-700">{agentDescription}</p>
     </div>
   );
-}`;
+}
+`;
 }
 
 function generateAPIService(openApiSpec: any, agent?: AgentData): string {
@@ -553,6 +516,9 @@ function generateAppTSX(components: ComponentInfo[], agent?: AgentData, openApiS
   const componentImports = components.map(c => `import ${c.name} from './${c.name}';`).join('\n');
   const componentElements = components.map(c => `<${c.name} />`).join('\n        ');
   
+  const apiTitle = openApiSpec?.info?.title || agent?.name || 'AI Agent';
+  const apiDescription = openApiSpec?.info?.description || 'AI-powered assistant';
+
   return `import React from 'react';
 ${componentImports}
 
@@ -561,13 +527,13 @@ export default function App() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-3xl font-bold text-gray-900">${agent?.name || 'AI Agent'}</h1>
-          <p className="text-gray-600 mt-2">${openApiSpec?.info?.description || 'AI-powered assistant'}</p>
+          <h1 className="text-3xl font-bold text-gray-900">${apiTitle}</h1>
+          <p className="text-gray-600 mt-2">${apiDescription}</p>
         </div>
       </header>
       
       <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-        <AgentInfo />
+        <AgentInfo agentName="${apiTitle}" agentDescription="${apiDescription}" />
         ${componentElements}
       </main>
       
