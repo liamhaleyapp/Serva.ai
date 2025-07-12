@@ -132,7 +132,7 @@ function generateFormFieldsFromSchema(
   if (schema.type === 'array' && schema.items) {
     // For simplicity, just allow comma-separated input for arrays of strings/numbers
     return `
-      <div style={{ marginLeft: ${depth * 16}px }}>
+      <div style={{ marginLeft: 16 }}>
         <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
         <input name="${parentKey}" type="text" placeholder="Comma-separated values" />
       </div>
@@ -142,7 +142,7 @@ function generateFormFieldsFromSchema(
   // Handle enums
   if (schema.enum) {
     return `
-      <div style={{ marginLeft: ${depth * 16}px }}>
+      <div style={{ marginLeft: 16 }}>
         <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
         <select name="${parentKey}">
           ${schema.enum.map((v: any) => `<option value="${v}">${v}</option>`).join('\n')}
@@ -156,7 +156,7 @@ function generateFormFieldsFromSchema(
   if (schema.type === 'number' || schema.type === 'integer') inputType = 'number';
   if (schema.type === 'boolean') {
     return `
-      <div style={{ marginLeft: ${depth * 16}px }}>
+      <div style={{ marginLeft: 16 }}>
         <label>
           <input name="${parentKey}" type="checkbox" />
           ${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}
@@ -166,14 +166,14 @@ function generateFormFieldsFromSchema(
   }
   if (schema.type === 'string' && (schema.format === 'textarea' || (schema.maxLength && schema.maxLength > 100))) {
     return `
-      <div style={{ marginLeft: ${depth * 16}px }}>
+      <div style={{ marginLeft: 16 }}>
         <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
         <textarea name="${parentKey}" rows={4} placeholder="${schema.default || ''}" />
       </div>
     `;
   }
   return `
-    <div style={{ marginLeft: ${depth * 16}px }}>
+    <div style={{ marginLeft: 16 }}>
       <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
       <input name="${parentKey}" type="${inputType}" placeholder="${schema.default || ''}" />
     </div>
