@@ -2,6 +2,161 @@ import React, { useState } from 'react';
 import Head from 'next/head';
 import ProgressIndicator from '../components/ProgressIndicator';
 
+// --- DynamicAgentForm: Renders a form from input definitions ---
+type InputOption = { value: string; label: string };
+type InputDefinition = {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  hint?: string;
+  options?: InputOption[];
+  group?: string;
+};
+
+interface DynamicAgentFormProps {
+  inputDefinitions: InputDefinition[];
+  onSubmit: (formData: Record<string, any>) => void;
+}
+
+function DynamicAgentForm({ inputDefinitions, onSubmit }: DynamicAgentFormProps) {
+  const [formState, setFormState] = useState<Record<string, any>>({});
+
+  const handleChange = (name: string, value: any) => {
+    setFormState(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleFileChange = (name: string, file: File | null) => {
+    setFormState(prev => ({ ...prev, [name]: file }));
+  };
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSubmit(formState);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6 mt-8">
+      {inputDefinitions.map((input: InputDefinition) => (
+        <div key={input.name} className="space-y-1">
+          <label className="block font-medium text-gray-700">
+            {input.label}
+            {input.required && <span className="text-red-500 ml-1">*</span>}
+          </label>
+          {input.hint && (
+            <div className="text-xs text-gray-500 mb-1">{input.hint}</div>
+          )}
+          {input.type === 'file' ? (
+            <input
+              type="file"
+              required={input.required}
+              onChange={e => handleFileChange(input.name, e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+              className="block w-full"
+            />
+          ) : input.type === 'textarea' ? (
+            <textarea
+              required={input.required}
+              value={formState[input.name] || ''}
+              onChange={e => handleChange(input.name, (e.target as HTMLTextAreaElement).value)}
+              className="w-full border border-gray-300 rounded-lg p-2"
+            />
+          ) : input.type === 'number' ? (
+            <input
+              type="number"
+              required={input.required}
+              value={formState[input.name] || ''}
+              onChange={e => handleChange(input.name, (e.target as HTMLInputElement).value)}
+              className="w-full border border-gray-300 rounded-lg p-2"
+            />
+          ) : input.type === 'checkbox' ? (
+            <input
+              type="checkbox"
+              checked={!!formState[input.name]}
+              onChange={e => handleChange(input.name, (e.target as HTMLInputElement).checked)}
+              className="w-4 h-4"
+            />
+          ) : input.type === 'dropdown' && input.options ? (
+            <select
+              required={input.required}
+              value={formState[input.name] || ''}
+              onChange={e => handleChange(input.name, (e.target as HTMLSelectElement).value)}
+              className="w-full border border-gray-300 rounded-lg p-2"
+            >
+              <option value="">Select...</option>
+              {input.options.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              required={input.required}
+              value={formState[input.name] || ''}
+              onChange={e => handleChange(input.name, (e.target as HTMLInputElement).value)}
+              className="w-full border border-gray-300 rounded-lg p-2"
+            />
+          )}
+        </div>
+      ))}
+      <button
+        type="submit"
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition"
+      >
+        Submit
+      </button>
+    </form>
+  );
+}
+
+// --- Extraction logic: Get user-facing input definitions from OpenAPI JSON ---
+function extractInputDefinitions(openApiJson: any) {
+  if (!openApiJson || typeof openApiJson !== 'object') return [];
+  // Find the POST path (usually only one for agent)
+  const postPath = Object.entries(openApiJson.paths || {}).find(
+    ([, methods]) => (methods as Record<string, any>).post
+  );
+  if (!postPath) return [];
+  const postOp = (postPath[1] as Record<string, any>).post;
+  // Get requestBody schema
+  const schema = postOp?.requestBody?.content?.['application/json']?.schema;
+  if (!schema || !schema.properties) return [];
+  // Main user inputs are usually under 'params'
+  const params = schema.properties.params;
+  const paramsRequired = (params && params.required) || [];
+  const paramProps = (params && params.properties) || {};
+  // Advanced options (optional)
+  const options = schema.properties.options;
+  const optionsRequired = (options && options.required) || [];
+  const optionProps = (options && options.properties) || {};
+  // Helper to map schema prop to input definition
+  function mapProp(name: string, prop: any, required: boolean) {
+    let type = 'text';
+    if (prop.format === 'binary') type = 'file';
+    else if (prop.type === 'boolean') type = 'checkbox';
+    else if (prop.type === 'integer' || prop.type === 'number') type = 'number';
+    else if (prop.type === 'string' && prop.maxLength && prop.maxLength > 200) type = 'textarea';
+    else if (prop.enum) type = 'dropdown';
+    return {
+      name,
+      label: prop.title || prop.description || name.replace(/([A-Z])/g, ' $1').replace(/^\w/, c => c.toUpperCase()),
+      type,
+      required: required,
+      hint: prop.description || '',
+      options: prop.enum ? prop.enum.map((v: any) => ({ value: v, label: String(v) })) : undefined,
+      group: 'main',
+    };
+  }
+  // Main inputs
+  const mainInputs = Object.entries(paramProps).map(([name, prop]) =>
+    mapProp(name, prop, paramsRequired.includes(name))
+  );
+  // Advanced options
+  const advancedInputs = Object.entries(optionProps).map(([name, prop]) =>
+    ({ ...mapProp(name, prop, optionsRequired.includes(name)), group: 'advanced' })
+  );
+  return [...mainInputs, ...advancedInputs];
+}
+
 const GENERATION_STEPS = [
   'Creating AI Agent',
   'Designing Interface',
@@ -201,6 +356,16 @@ export default function Home() {
                   </div>
                 )}
                 <div className="text-xs text-gray-500">Components generated: {result.component_count}</div>
+                {/* --- Dynamic Agent Form --- */}
+                {result.ntl && (
+                  <DynamicAgentForm
+                    inputDefinitions={extractInputDefinitions(result.ntl)}
+                    onSubmit={(formData) => {
+                      // TODO: Handle form submission (call agent endpoint, etc.)
+                      alert('Form submitted! ' + JSON.stringify(formData, null, 2));
+                    }}
+                  />
+                )}
               </div>
             )}
           </div>
