@@ -11,7 +11,7 @@ export interface CodegenOptions {
 const defaultOutDir = '/tmp';
 
 export async function generateCodeFromNTL(openApiSpec: any, apiKey: string, agent?: AgentData): Promise<string> {
-  const outDir = path.join(defaultOutDir, `project-${Date.now()}`);
+  const outDir = path.join(process.cwd(), 'projects', `site-${Date.now()}`);
   await fs.mkdirp(outDir);
   await fs.mkdirp(path.join(outDir, 'src'));
 
@@ -38,6 +38,7 @@ export async function generateCodeFromNTL(openApiSpec: any, apiKey: string, agen
 
   // 7. Write src/App.tsx
   await fs.writeFile(path.join(outDir, 'src/App.tsx'), generateAppTSX(components, agent, openApiSpec));
+  console.log('Generated App.tsx:', await fs.readFile(path.join(outDir, 'src/App.tsx'), 'utf8'));
 
   // 8. Write src/index.css
   await fs.writeFile(path.join(outDir, 'src/index.css'), generateIndexCSS());
@@ -55,9 +56,6 @@ export async function generateCodeFromNTL(openApiSpec: any, apiKey: string, agen
 
   // 12. Write vite.config.ts
   await fs.writeFile(path.join(outDir, 'vite.config.ts'), generateViteConfig());
-
-  console.log('Generated App.tsx:', await fs.readFile(path.join(outDir, 'src/App.tsx'), 'utf8'));
-  console.log('Generated MaistroPost.tsx:', await fs.readFile(path.join(outDir, 'src/Postmaistro.tsx'), 'utf8'));
 
   return outDir;
 }
@@ -105,6 +103,84 @@ function generateComponentName(path: string, method: string): string {
   );
 }
 
+// Helper: Recursively generate form fields from a JSON schema
+function generateFormFieldsFromSchema(
+  schema: any,
+  parentKey: string = '',
+  required: string[] = [],
+  depth: number = 0
+): string {
+  if (!schema || typeof schema !== 'object') return '';
+
+  let fields = '';
+
+  if (schema.type === 'object' && schema.properties) {
+    Object.entries(schema.properties).forEach(([key, propSchema]: [string, any]) => {
+      const isRequired = required.includes(key);
+      const fieldName = parentKey ? `${parentKey}.${key}` : key;
+      fields += generateFormFieldsFromSchema(
+        propSchema,
+        fieldName,
+        propSchema.required || [],
+        depth + 1
+      );
+    });
+    return fields;
+  }
+
+  // Handle arrays
+  if (schema.type === 'array' && schema.items) {
+    // For simplicity, just allow comma-separated input for arrays of strings/numbers
+    return `
+      <div style={{ marginLeft: ${depth * 16}px }}>
+        <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
+        <input name="${parentKey}" type="text" placeholder="Comma-separated values" />
+      </div>
+    `;
+  }
+
+  // Handle enums
+  if (schema.enum) {
+    return `
+      <div style={{ marginLeft: ${depth * 16}px }}>
+        <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
+        <select name="${parentKey}">
+          ${schema.enum.map((v: any) => `<option value="${v}">${v}</option>`).join('\n')}
+        </select>
+      </div>
+    `;
+  }
+
+  // Handle primitive types
+  let inputType = 'text';
+  if (schema.type === 'number' || schema.type === 'integer') inputType = 'number';
+  if (schema.type === 'boolean') {
+    return `
+      <div style={{ marginLeft: ${depth * 16}px }}>
+        <label>
+          <input name="${parentKey}" type="checkbox" />
+          ${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}
+        </label>
+      </div>
+    `;
+  }
+  if (schema.type === 'string' && (schema.format === 'textarea' || (schema.maxLength && schema.maxLength > 100))) {
+    return `
+      <div style={{ marginLeft: ${depth * 16}px }}>
+        <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
+        <textarea name="${parentKey}" rows={4} placeholder="${schema.default || ''}" />
+      </div>
+    `;
+  }
+  return `
+    <div style={{ marginLeft: ${depth * 16}px }}>
+      <label>${parentKey}${schema.description ? ` - ${schema.description}` : ''}${required.includes(parentKey) ? ' *' : ''}</label>
+      <input name="${parentKey}" type="${inputType}" placeholder="${schema.default || ''}" />
+    </div>
+  `;
+}
+
+// Patch generateGenericComponent to use the above helper
 function generateGenericComponent(path: string, method: string, operation: any): string {
   const opId = operation.operationId || `${method}_${path.replace(/[^a-zA-Z0-9]/g, '')}`;
   const summary = operation.summary || `${method.toUpperCase()} ${path}`;
@@ -114,18 +190,20 @@ function generateGenericComponent(path: string, method: string, operation: any):
   // Generate form fields for parameters
   const paramFields = params.map((param: any) => {
     return `<div>
-      <label>${param.name}:</label>
+      <label>${param.name}${param.description ? ` - ${param.description}` : ''}${param.required ? ' *' : ''}:</label>
       <input name="${param.name}" type="text" />
     </div>`;
   }).join('\n');
 
-  // Add a textarea for request body if present
-  const bodyField = hasBody
-    ? `<div>
-        <label>Body (JSON):</label>
-        <textarea name="body" rows={4} />
-      </div>`
-    : '';
+  // Generate form fields for request body (recursively)
+  let bodyFields = '';
+  if (hasBody) {
+    const content = operation.requestBody.content || {};
+    const jsonSchema = content['application/json']?.schema;
+    if (jsonSchema) {
+      bodyFields = generateFormFieldsFromSchema(jsonSchema, '', jsonSchema.required || []);
+    }
+  }
 
   return `
 import React, { useState } from 'react';
@@ -142,7 +220,21 @@ export default function ${generateComponentName(path, method)}() {
 
     let body = undefined;
     if (${hasBody}) {
-      try { body = JSON.parse(params['body'] as string); } catch {}
+      // Build body object from form fields (flattened keys)
+      body = {};
+      Object.keys(params).forEach((k) => {
+        // Support nested keys like 'params.blogTopic'
+        const keys = k.split('.');
+        let ref = body;
+        keys.forEach((key, idx) => {
+          if (idx === keys.length - 1) {
+            ref[key] = params[k];
+          } else {
+            ref[key] = ref[key] || {};
+            ref = ref[key];
+          }
+        });
+      });
     }
 
     const res = await fetch(
@@ -160,7 +252,7 @@ export default function ${generateComponentName(path, method)}() {
       <h3>${summary}</h3>
       <form onSubmit={handleSubmit}>
         ${paramFields}
-        ${bodyField}
+        ${bodyFields}
         <button type="submit">Send</button>
       </form>
       {result && (
